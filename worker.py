@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
 """
-AWS Batch GPU/CPU worker (one video per job):
+AWS Batch GPU/CPU worker (one audio file per job) — Rhode Island variant:
+
+SQS feed: rhode_island_transcripts
+S3 bucket with audio files: rhode-island-audio
 
 Input payload (JSON):
   {
-    "video_id": "t5pBl8-xBd8",
-    "url": "https://www.youtube.com/watch?v=t5pBl8-xBd8",
-    "title": "House Session - 2026-02-27 - 9:30AM",
-    "published_at": "2026-02-27T16:10:22Z",
-    "Channel_id": "UCC1w34Iyg1vB_HT6dt_4eMA",
-    "Municipality": "Vermont House of Representatives",
-    "advertising": "<b>...",
-    "office_id": "1672",
-    "s3_bucket": "statehouses-audio-bucket",
-    "s3_key": "jobs/t5pBl8-xBd8.wav",
-    "wav_size_mb": 173.62,
-    "downloaded_at": "2026-03-03T19:00:39Z"
+    "title": "House Finance Committee - 2026-03-05",
+    "Municipality": "Rhode Island House of Representatives",
+    "advertising": "<b>...</b>",
+    "office_id": "1676",
+    "s3_bucket": "rhode-island-audio",
+    "s3_key": "jobs/12345.wav",
+    "source_url": "https://capitoltvri.cablecast.tv/show/12345"
   }
 
-Required fields: url, title, office_id, s3_bucket, s3_key
+Required fields: title, office_id, s3_bucket, s3_key
+source_url is optional metadata (used for logging and the source link).
 
 The worker will:
 - Download pre-converted WAV from S3 (s3_bucket/s3_key)
@@ -329,18 +328,10 @@ def build_transcript_html(words: List[Dict[str, Any]]) -> str:
         parts.append(f"<br><br><b>[{ts}]</b> {p['html']}")
     return "".join(parts)
 
-def embed_html_from_url(url: str) -> str:
-    m = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11})", url)
-    vid = m.group(1) if m else ""
-    if not vid:
+def source_link_html(source_url: str) -> str:
+    if not source_url:
         return ""
-    return (
-        '<div style="position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; max-width: 100%; margin-bottom: 20px;">'
-        '<iframe style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;" '
-        f'src="https://www.youtube.com/embed/{vid}" '
-        'frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>'
-        "</div>"
-    )
+    return f'<p><a href="{source_url}">View original video source</a></p>'
 
 def strip_html(text: str) -> str:
     return re.sub(r"<.*?>", "", text)
@@ -413,16 +404,16 @@ def summarize_transcript(openai_client: OpenAI, transcript_html: str) -> str:
 
     return chat("Create a concise overall summary from these section summaries:", "\n\n".join(summaries), max_final)
 
-def build_full_description(summary: str, advertising_html: str, embed_html: str, transcript_html: str) -> str:
+def build_full_description(summary: str, advertising_html: str, source_html: str, transcript_html: str) -> str:
     disclosure = " <i>This summary was created by AI and may contain hallucinations.</i><br><br>"
     explainer = (
-        "<p>This is an AI generated transcript from the original video. "
+        "<p>This is an AI generated transcript from the original audio. "
         "Words are color coded by confidence of the AI model. Words in black have a greater than 90% confidence, "
         "between 50% and 90% in <span style='color:blueviolet'> purple </span> and less than 50% in <span style='color:red'>red</span>.</p>"
     )
     adv = (advertising_html or "").strip()
     adv_block = (adv + "<br><br>") if adv else ""
-    return summary + disclosure + adv_block + (embed_html or "") + explainer + transcript_html
+    return summary + disclosure + adv_block + (source_html or "") + explainer + transcript_html
 
 
 # ----------------------------
@@ -451,10 +442,6 @@ def post_to_api(payload: Dict[str, Any]) -> None:
 # ----------------------------
 
 def process_one(job: Dict[str, Any]) -> None:
-    url = job.get("url")
-    if not url:
-        raise ValueError("job payload must include 'url'")
-
     title = job.get("title")
     if not title:
         raise ValueError("job payload must include 'title'")
@@ -472,12 +459,12 @@ def process_one(job: Dict[str, Any]) -> None:
     if not s3_key:
         raise ValueError("job payload must include 's3_key'")
 
-    video_id = job.get("video_id", "")
+    source_url = job.get("source_url", "")
     municipality = job.get("Municipality", "").strip()
     advertising = job.get("advertising", "")
     public = True
 
-    log(f"[meta] video_id={video_id!r} office_id={office_id} municipality={municipality!r} title={title[:120]!r}")
+    log(f"[meta] source_url={source_url!r} office_id={office_id} municipality={municipality!r} title={title[:120]!r}")
     log(f"[meta] s3_bucket={s3_bucket!r} s3_key={s3_key!r}")
 
     user_id = 2
@@ -500,13 +487,13 @@ def process_one(job: Dict[str, Any]) -> None:
         log(f"[time] transcribe {time.time()-t1:.1f}s")
 
         transcript_html = build_transcript_html(words)
-        embed = embed_html_from_url(url)
+        source_html = source_link_html(source_url)
 
         t2 = time.time()
         summary = summarize_transcript(oa, transcript_html)
         log(f"[time] summarize {time.time()-t2:.1f}s")
 
-        description = build_full_description(summary, advertising, embed, transcript_html)
+        description = build_full_description(summary, advertising, source_html, transcript_html)
 
         api_payload = {
             "office_id": office_id,
