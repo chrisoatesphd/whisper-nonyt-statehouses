@@ -13,11 +13,11 @@ Input payload (JSON):
     "office_id": "1676",
     "s3_bucket": "rhode-island-audio",
     "s3_key": "jobs/12345.wav",
-    "show_id": "12345"
+    "source_url": "https://capitoltvri.cablecast.tv/show/12345"
   }
 
 Required fields: title, office_id, s3_bucket, s3_key
-show_id is optional metadata (used for logging and the source link).
+source_url is optional metadata (used for logging and the source link).
 
 The worker will:
 - Download pre-converted WAV from S3 (s3_bucket/s3_key)
@@ -328,13 +328,10 @@ def build_transcript_html(words: List[Dict[str, Any]]) -> str:
         parts.append(f"<br><br><b>[{ts}]</b> {p['html']}")
     return "".join(parts)
 
-BASE_CABLECAST = "https://capitoltvri.cablecast.tv"
-
-def source_link_html(show_id: str) -> str:
-    if not show_id:
+def source_link_html(source_url: str) -> str:
+    if not source_url:
         return ""
-    url = f"{BASE_CABLECAST}/show/{show_id}"
-    return f'<p><a href="{url}">View original video source</a></p>'
+    return f'<p><a href="{source_url}">View original video source</a></p>'
 
 def strip_html(text: str) -> str:
     return re.sub(r"<.*?>", "", text)
@@ -462,12 +459,12 @@ def process_one(job: Dict[str, Any]) -> None:
     if not s3_key:
         raise ValueError("job payload must include 's3_key'")
 
-    show_id = job.get("show_id", "")
+    source_url = job.get("source_url", "")
     municipality = job.get("Municipality", "").strip()
     advertising = job.get("advertising", "")
     public = True
 
-    log(f"[meta] show_id={show_id!r} office_id={office_id} municipality={municipality!r} title={title[:120]!r}")
+    log(f"[meta] source_url={source_url!r} office_id={office_id} municipality={municipality!r} title={title[:120]!r}")
     log(f"[meta] s3_bucket={s3_bucket!r} s3_key={s3_key!r}")
 
     user_id = 2
@@ -490,7 +487,7 @@ def process_one(job: Dict[str, Any]) -> None:
         log(f"[time] transcribe {time.time()-t1:.1f}s")
 
         transcript_html = build_transcript_html(words)
-        source_html = source_link_html(show_id)
+        source_html = source_link_html(source_url)
 
         t2 = time.time()
         summary = summarize_transcript(oa, transcript_html)
