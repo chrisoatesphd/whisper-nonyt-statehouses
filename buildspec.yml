@@ -1,0 +1,33 @@
+version: 0.2
+
+env:
+  variables:
+    AWS_REGION: "us-east-2"
+    ACCOUNT_ID: "335533191027"
+    REPO_NAME: "whisper-gpu-worker"
+    REPO_URI: "335533191027.dkr.ecr.us-east-2.amazonaws.com/whisper-gpu-worker"
+
+phases:
+  pre_build:
+    commands:
+      - echo "Logging in to ECR..."
+      - aws --version
+      - uname -m
+      - docker --version
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+  build:
+    commands:
+      - IMAGE_TAG=$(date +%Y%m%d-%H%M%S)
+      - echo "Building $REPO_URI:$IMAGE_TAG"
+      # Same image is used for both GPU (whisper-gpu job def) and CPU (whisper-cpu job def)
+      - docker build -t $REPO_URI:$IMAGE_TAG -t $REPO_URI:latest -t $REPO_URI:cpu .
+
+  post_build:
+    commands:
+      - echo "Pushing..."
+      - docker push $REPO_URI:$IMAGE_TAG
+      - docker push $REPO_URI:latest
+      - docker push $REPO_URI:cpu
+      - echo "Done."
+

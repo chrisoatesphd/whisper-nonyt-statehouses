@@ -1,0 +1,3 @@
+# Lambda runtime already includes boto3.
+# These are listed for documentation and local testing only.
+boto3>=1.34.0
